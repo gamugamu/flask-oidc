@@ -815,7 +815,6 @@ class OpenIDConnect(object):
         if token:
             try:
                 token_info = self._get_token_info(token)
-                print("TOKEN INFO: ", token_info)
             except Exception as ex:
                 token_info = {'active': False}
                 logger.error('ERROR: Unable to get token info')
@@ -846,11 +845,7 @@ class OpenIDConnect(object):
                         client_set_roles    = set(token_info['resource_access'][client]['roles'])
                         expected_set_roles  = set(roles_required)
 
-                        print("*** should test", token_info['resource_access'][client])
-                        print("****", set(roles_required).issubset(set(token_info['resource_access'][client]['roles'])),token_info['resource_access'][client]['roles'],  set(roles_required))
-
                         if not expected_set_roles.issubset(client_set_roles):
-                            print("invalid")
                             return 'Token does not have required roles'
                     except KeyError as e:
                         return 'Token does not have required roles'
