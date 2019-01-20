@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2015, Erica Ehrhardt
+# Copyright (c) 2014-2015, Jeremy Ehrhardt <jeremy@bat-country.us>
 # Copyright (c) 2016, Patrick Uiterwijk <patrick@puiterwijk.org>
 # All rights reserved.
 #
@@ -441,7 +441,7 @@ class OpenIDConnect(object):
             try:
                 credentials = OAuth2Credentials.from_json(
                     self.credentials_store[id_token['sub']])
-            except KeyError:
+            except (KeyError, ValueError) as e:
                 logger.debug("Expired ID token, credentials missing",
                              exc_info=True)
                 return self.redirect_to_auth_server(request.url)
@@ -469,7 +469,11 @@ class OpenIDConnect(object):
                 # for re-authentication.
                 logger.debug("Expired ID token, can't refresh credentials",
                              exc_info=True)
-                del self.credentials_store[id_token['sub']]
+                try:
+                    del self.credentials_store[id_token['sub']]
+                except:
+                    pass
+
                 return self.redirect_to_auth_server(request.url)
 
         # make ID token available to views
@@ -513,11 +517,20 @@ class OpenIDConnect(object):
             @wraps(view_func)
             def decorated(*args, **kwargs):
                 pre, tkn, post = self.get_access_token().split('.')
+                tkn += '=' * (-len(tkn) % 4)
+
                 access_token = json.loads(b64decode(tkn))
-                if role in access_token['resource_access'][client]['roles']:
-                    return view_func(*args, **kwargs)
-                else:
+                # patch, crash if key doesn't exist.
+                try:
+                    if role in access_token['resource_access'][client]['roles']:
+                        return view_func(*args, **kwargs)
+                    else:
+                        return abort(403)
+                except:
+                    # it only happen the key doesn't exist and the user doesn't have any roles.
+                    # So we can pass this error silently.
                     return abort(403)
+
             return decorated
         return wrapper
 
@@ -766,7 +779,7 @@ class OpenIDConnect(object):
         self._set_cookie_id_token(None)
 
     # Below here is for resource servers to validate tokens
-    def validate_token(self, token, scopes_required=None):
+    def validate_token(self, token, scopes_required=None, client=None, roles_required=[]):
         """
         This function can be used to validate tokens.
 
@@ -784,13 +797,13 @@ class OpenIDConnect(object):
 
         .. versionadded:: 1.1
         """
-        valid = self._validate_token(token, scopes_required)
+        valid = self._validate_token(token, scopes_required, client, roles_required)
         if valid is True:
             return True
         else:
             return ErrStr(valid)
 
-    def _validate_token(self, token, scopes_required=None):
+    def _validate_token(self, token, scopes_required=None, client=None, roles_required=[]):
         """The actual implementation of validate_token."""
         if scopes_required is None:
             scopes_required = []
@@ -802,6 +815,7 @@ class OpenIDConnect(object):
         if token:
             try:
                 token_info = self._get_token_info(token)
+                print("TOKEN INFO: ", token_info)
             except Exception as ex:
                 token_info = {'active': False}
                 logger.error('ERROR: Unable to get token info')
@@ -826,6 +840,21 @@ class OpenIDConnect(object):
 
             if valid_token:
                 token_scopes = token_info.get('scope', '').split(' ')
+
+                if len(roles_required):
+                    try:
+                        client_set_roles    = set(token_info['resource_access'][client]['roles'])
+                        expected_set_roles  = set(roles_required)
+
+                        print("*** should test", token_info['resource_access'][client])
+                        print("****", set(roles_required).issubset(set(token_info['resource_access'][client]['roles'])),token_info['resource_access'][client]['roles'],  set(roles_required))
+
+                        if not expected_set_roles.issubset(client_set_roles):
+                            print("invalid")
+                            return 'Token does not have required roles'
+                    except KeyError as e:
+                        return 'Token does not have required roles'
+
             else:
                 token_scopes = []
             has_required_scopes = scopes_required.issubset(
@@ -845,7 +874,7 @@ class OpenIDConnect(object):
         else:
             return 'Something went wrong checking your token'
 
-    def accept_token(self, require_token=False, scopes_required=None,
+    def accept_token(self, require_token=False, scopes_required=None, client=None, roles_required=[],
                            render_errors=True):
         """
         Use this to decorate view functions that should accept OAuth2 tokens,
@@ -884,7 +913,7 @@ class OpenIDConnect(object):
                 elif 'access_token' in request.args:
                     token = request.args['access_token']
 
-                validity = self.validate_token(token, scopes_required)
+                validity = self.validate_token(token, scopes_required, client, roles_required)
                 if (validity is True) or (not require_token):
                     return view_func(*args, **kwargs)
                 else:
@@ -907,7 +936,7 @@ class OpenIDConnect(object):
         if hint != 'none':
             request['token_type_hint'] = hint
 
-        auth_method = current_app.config['OIDC_INTROSPECTION_AUTH_METHOD'] 
+        auth_method = current_app.config['OIDC_INTROSPECTION_AUTH_METHOD']
         if (auth_method == 'client_secret_basic'):
             basic_auth_string = '%s:%s' % (self.client_secrets['client_id'], self.client_secrets['client_secret'])
             basic_auth_bytes = bytearray(basic_auth_string, 'utf-8')
