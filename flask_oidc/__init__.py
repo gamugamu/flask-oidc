@@ -530,7 +530,7 @@ class OpenIDConnect(object):
                     # it only happen the key doesn't exist and the user doesn't have any roles.
                     # So we can pass this error silently.
                     return abort(403)
-
+                    
             return decorated
         return wrapper
 
@@ -815,6 +815,7 @@ class OpenIDConnect(object):
         if token:
             try:
                 token_info = self._get_token_info(token)
+
             except Exception as ex:
                 token_info = {'active': False}
                 logger.error('ERROR: Unable to get token info')
@@ -842,6 +843,9 @@ class OpenIDConnect(object):
 
                 if len(roles_required):
                     try:
+                        if client is None:
+                            client = self.client_secrets.get('roles_defined_by_client')
+
                         client_set_roles    = set(token_info['resource_access'][client]['roles'])
                         expected_set_roles  = set(roles_required)
 
